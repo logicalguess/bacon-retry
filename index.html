@@ -1,0 +1,83 @@
+<html>
+<head>
+    <script type="text/javascript" src="lib/jquery.js"></script>
+    <script type="text/javascript" src="lib/jquery.mockjax.js"></script>
+    <script type="text/javascript" src="lib/Bacon.js"></script>
+    <script type="text/javascript" src="lib/bacon.model.js"></script>
+    <script type="text/javascript" src="lib/bacon.jquery.js"></script>
+    <script type="text/javascript" src="mocks.js"></script>
+</head>
+<body>
+
+<div id="retry-container">
+    <h1>Bacon Retry</h1>
+
+    <div id="service-call">
+        <div><b>URLs to try in order: </b><span id="service-urls"></span></div><br><br>
+        <button>Make the call</button>
+        <input type="checkbox" id="ignoreSlowSuccess" value="false">Ignore Late Successful Responses<br><br>
+        <div>Result: <span id="service-result"></span></div>
+    </div>
+</div>
+
+<script type="text/javascript">
+
+    var delayMs = 2000;
+    var urls = ['/api/success/slow', '/api/error/500', '/api/error/500/slow', '/api/success', '/api/error/500'];
+
+    var submitInteraction = {
+        element: $('#service-call button'),
+        event: 'click'
+    };
+    var resultInteraction = {
+        element: $("#service-result")
+    };
+    $("#service-urls").html('<br><br>' + urls.join('<br>'));
+
+    var showResult = function(txt) {
+        resultInteraction.element.text(txt);
+    }
+
+    var submits = submitInteraction.element.asEventStream(submitInteraction.event).doAction('.preventDefault');
+
+    submits.onValue(function(){
+        var serviceCall = retry(urls, delayMs, $('#ignoreSlowSuccess').is(':checked'));
+
+        serviceCall.pending.onValue(showResult, "Pending...");
+        serviceCall.result.onValue(showResult);
+        serviceCall.result.onError(showResult);
+    });
+
+    function retry(urls, delayMs, ignoreSlowSuccess) {
+        urls.push(new Bacon.End());
+        var start = new Bacon.Bus()//.log();
+        var success = new Bacon.Bus()//.log();
+        var result = new Bacon.Bus()//.log();
+
+        var request = start.flatMap(Bacon.once(urls.shift()).concat(Bacon.sequentially(delayMs, urls))).takeUntil(success)//.log();
+        var response = request[ignoreSlowSuccess ? 'flatMapLatest' : 'flatMap'](function (val) {
+            return Bacon.fromPromise($.ajax({url: val}))//.log();
+        })//.log();
+        success.plug(response.skipErrors().doAction(function (val) {
+            result.push(val);
+            result.end();
+        }).map(new Bacon.End()));
+
+        response.onEnd(function () {
+            success.end();
+            result.error('Error'); //it happens only if doAction did not push a success value
+            result.end();
+        });
+
+        start.push(new Bacon.End());
+        start.end();
+
+        return {
+            result: result,
+            pending: start.awaiting(result)
+        };
+    }
+</script>
+
+</body>
+</html>
