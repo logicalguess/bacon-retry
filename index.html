@@ -41,7 +41,7 @@
     var submits = submitInteraction.element.asEventStream(submitInteraction.event).doAction('.preventDefault');
 
     submits.onValue(function(){
-        var serviceCall = retrySM(urls, delayMs, $('#ignoreSlowSuccess').is(':checked'));
+        var serviceCall = retry(urls, delayMs, $('#ignoreSlowSuccess').is(':checked'));
 
         serviceCall.pending.onValue(showResult, "Pending...");
         serviceCall.result.onValue(showResult);
@@ -93,7 +93,7 @@
             },
             getResult: function() {
                 var fr = this.getFirstResolved();
-                return Bacon.fromPromise(fr ? fr : this.getLast());
+                return Bacon.fromPromise(!ignoreSlowSuccess && fr ? fr : this.getLast());
             }
         };
 
