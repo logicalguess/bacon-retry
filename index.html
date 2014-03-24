@@ -41,7 +41,7 @@
     var submits = submitInteraction.element.asEventStream(submitInteraction.event).doAction('.preventDefault');
 
     submits.onValue(function(){
-        var serviceCall = retry(urls, delayMs, $('#ignoreSlowSuccess').is(':checked'));
+        var serviceCall = retrySM(urls, delayMs, $('#ignoreSlowSuccess').is(':checked'));
 
         serviceCall.pending.onValue(showResult, "Pending...");
         serviceCall.result.onValue(showResult);
@@ -49,32 +49,73 @@
     });
 
     function retry(urls, delayMs, ignoreSlowSuccess) {
-        urls.push(new Bacon.End());
-        var start = new Bacon.Bus()//.log();
-        var success = new Bacon.Bus()//.log();
-        var result = new Bacon.Bus()//.log();
+        var state = {
+            promises: [],
+            getCount: function () {
+                return this.promises.length;
+            },
+            isAnyResolved: function () {
+                for (var i = 0; i < this.promises.length; i++) {
+                    if (this.promises[i].state() == 'resolved') {
+                        return true;
+                    }
+                }
+                return false;
+            },
+            isResolved: function() {
+                if (this.promises.length == 0) return false;
+                return ignoreSlowSuccess ? this.getLast().state() == 'resolved' : this.isAnyResolved();
+            },
+            getFirstResolved: function () {
+                for (var i = 0; i < this.promises.length; ++i) {
+                    if (this.promises[i].state() == 'resolved')
+                        return this.promises[i];
+                }
+            },
+            getLast: function () {
+                return this.promises[this.promises.length - 1];
+            },
+            add: function (promise) {
+                this.promises.push(promise);
+            },
+            getHistory: function () {
+                if (this.promises.length == 0) {
+                    return new Bacon.never();
+                }
 
-        var request = start.flatMap(Bacon.once(urls.shift()).concat(Bacon.sequentially(delayMs, urls))).takeUntil(success)//.log();
-        var response = request[ignoreSlowSuccess ? 'flatMapLatest' : 'flatMap'](function (val) {
-            return Bacon.fromPromise($.ajax({url: val}))//.log();
-        })//.log();
-        success.plug(response.skipErrors().doAction(function (val) {
-            result.push(val);
-            result.end();
-        }).map(new Bacon.End()));
+                var stream = Bacon.fromPromise(this.promises[0]);
+                if (this.promises.length > 1) {
+                    for (var i = 1; i < this.promises.length; ++i) {
+                        stream = stream.concat(this.promises[i]);
+                    }
+                }
+                return stream;
+            },
+            getResult: function() {
+                var fr = this.getFirstResolved();
+                return Bacon.fromPromise(fr ? fr : this.getLast());
+            }
+        };
 
-        response.onEnd(function () {
-            success.end();
-            result.error('Error'); //it happens only if doAction did not push a success value
-            result.end();
-        });
-
-        start.push(new Bacon.End());
-        start.end();
+        var pipe = Bacon.once(urls.shift()).concat(Bacon.sequentially(delayMs, urls))
+                .withStateMachine(state, function(state, event) {
+                    if (state.promises.length > 0) console.log(state.promises[0].state(), state.isResolved())
+                    if (state.isResolved() || event.isEnd()) {
+                        return [state, [new Bacon.Next(state), new Bacon.End()]]
+                    }
+                    else {
+                        state.add($.ajax({url: event.value()}));
+                        return [state, [new Bacon.Next(state)]];
+                    }
+                })//.log();
 
         return {
-            result: result.take(1),
-            pending: start.awaiting(result)
+            result: pipe.filter(function(state){
+                return state.isResolved() || (state.getCount() == urls.length);
+            }).flatMap(function(state){return state.getResult()}),
+            pending: pipe.filter(function(state){
+                return !(state.isResolved() || (state.getCount() == urls.length));
+            }).map(Boolean)
         };
     }
 </script>

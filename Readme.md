@@ -28,6 +28,8 @@ launching a call to the next URL is 2 seconds.
 
 ##Code
 
+###Stream collaboration (master branch)
+
         function retry(urls, delayMs, ignoreSlowSuccess) {
             urls.push(new Bacon.End());
             var start = new Bacon.Bus()//.log();
@@ -57,3 +59,76 @@ launching a call to the next URL is 2 seconds.
                 pending: start.awaiting(result)
             };
         }
+
+###State Machine for state management (state-machine branch)
+
+            function retry(urls, delayMs, ignoreSlowSuccess) {
+                var state = {
+                    promises: [],
+                    getCount: function () {
+                        return this.promises.length;
+                    },
+                    isAnyResolved: function () {
+                        for (var i = 0; i < this.promises.length; i++) {
+                            if (this.promises[i].state() == 'resolved') {
+                                return true;
+                            }
+                        }
+                        return false;
+                    },
+                    isResolved: function() {
+                        if (this.promises.length == 0) return false;
+                        return ignoreSlowSuccess ? this.getLast().state() == 'resolved' : this.isAnyResolved();
+                    },
+                    getFirstResolved: function () {
+                        for (var i = 0; i < this.promises.length; ++i) {
+                            if (this.promises[i].state() == 'resolved')
+                                return this.promises[i];
+                        }
+                    },
+                    getLast: function () {
+                        return this.promises[this.promises.length - 1];
+                    },
+                    add: function (promise) {
+                        this.promises.push(promise);
+                    },
+                    getHistory: function () {
+                        if (this.promises.length == 0) {
+                            return new Bacon.never();
+                        }
+
+                        var stream = Bacon.fromPromise(this.promises[0]);
+                        if (this.promises.length > 1) {
+                            for (var i = 1; i < this.promises.length; ++i) {
+                                stream = stream.concat(this.promises[i]);
+                            }
+                        }
+                        return stream;
+                    },
+                    getResult: function() {
+                        var fr = this.getFirstResolved();
+                        return Bacon.fromPromise(fr ? fr : this.getLast());
+                    }
+                };
+
+                var pipe = Bacon.once(urls.shift()).concat(Bacon.sequentially(delayMs, urls))
+                        .withStateMachine(state, function(state, event) {
+                            if (state.promises.length > 0) console.log(state.promises[0].state(), state.isResolved())
+                            if (state.isResolved() || event.isEnd()) {
+                                return [state, [new Bacon.Next(state), new Bacon.End()]]
+                            }
+                            else {
+                                state.add($.ajax({url: event.value()}));
+                                return [state, [new Bacon.Next(state)]];
+                            }
+                        })//.log();
+
+                return {
+                    result: pipe.filter(function(state){
+                        return state.isResolved() || (state.getCount() == urls.length);
+                    }).flatMap(function(state){return state.getResult()}),
+                    pending: pipe.filter(function(state){
+                        return !(state.isResolved() || (state.getCount() == urls.length));
+                    }).map(Boolean)
+                };
+            }
