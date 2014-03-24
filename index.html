@@ -73,7 +73,7 @@
         start.end();
 
         return {
-            result: result,
+            result: result.take(1),
             pending: start.awaiting(result)
         };
     }
