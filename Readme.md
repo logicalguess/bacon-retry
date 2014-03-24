@@ -113,7 +113,6 @@ launching a call to the next URL is 2 seconds.
 
                 var pipe = Bacon.once(urls.shift()).concat(Bacon.sequentially(delayMs, urls))
                         .withStateMachine(state, function(state, event) {
-                            if (state.promises.length > 0) console.log(state.promises[0].state(), state.isResolved())
                             if (state.isResolved() || event.isEnd()) {
                                 return [state, [new Bacon.Next(state), new Bacon.End()]]
                             }
